@@ -1,0 +1,203 @@
+{
+  "entities": {
+    "ModelVersion": {
+      "title": "ModelVersion",
+      "description": "Metadata and evaluation metrics for a trained RuBertToxicDetector checkpoint.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Model architecture or display name."
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Semantic version tag (e.g. v1.0.0)."
+        },
+        "baseModel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Backbone pretrained model identifier."
+        },
+        "epoch": {
+          "type": "integer",
+          "description": "Best checkpoint epoch number."
+        },
+        "valMacroF1": {
+          "type": "number",
+          "description": "Validation token-level Macro F1 score."
+        },
+        "valMicroF1": {
+          "type": "number",
+          "description": "Validation token-level Micro F1 score."
+        },
+        "perClassF1": {
+          "type": "object",
+          "description": "Per-category validation F1 scores."
+        },
+        "weightsUri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Path or external URI to best_model.pt weights."
+        },
+        "datasetName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Training dataset filename or reference."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Optional training notes or hyperparameters."
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether this model version is the active default."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "baseModel",
+        "epoch",
+        "valMacroF1",
+        "valMicroF1",
+        "perClassF1",
+        "weightsUri",
+        "datasetName",
+        "isActive",
+        "createdAt"
+      ]
+    },
+    "RequestLog": {
+      "title": "RequestLog",
+      "description": "Logged inference request with predicted toxic spans and user feedback status.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "Original analyzed Russian comment."
+        },
+        "entities": {
+          "type": "array",
+          "description": "Detected toxic spans with start/end offsets and categories."
+        },
+        "engine": {
+          "type": "string",
+          "enum": ["fastapi", "gemini-fallback"],
+          "description": "Inference backend that produced the prediction."
+        },
+        "modelVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Model version identifier used for inference."
+        },
+        "latencyMs": {
+          "type": "integer",
+          "description": "Inference latency in milliseconds."
+        },
+        "feedbackStatus": {
+          "type": "string",
+          "enum": ["pending", "confirmed", "rejected"],
+          "description": "User verification state."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        }
+      },
+      "required": [
+        "text",
+        "entities",
+        "engine",
+        "modelVersion",
+        "latencyMs",
+        "feedbackStatus",
+        "createdAt"
+      ]
+    },
+    "LabeledSample": {
+      "title": "LabeledSample",
+      "description": "User-verified or flagged sample stored for retraining in cleaned_deduplicated_dataset.jsonl format.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "Comment text."
+        },
+        "entities": {
+          "type": "array",
+          "description": "Span annotations matching dataset format."
+        },
+        "verdict": {
+          "type": "string",
+          "enum": ["confirmed", "rejected"],
+          "description": "User verdict on the model output."
+        },
+        "sourceLogId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Reference ID of the originating RequestLog document."
+        },
+        "modelVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Model version evaluated."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        }
+      },
+      "required": [
+        "text",
+        "entities",
+        "verdict",
+        "sourceLogId",
+        "modelVersion",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/models/{modelId}": {
+      "schema": {
+        "$ref": "#/entities/ModelVersion"
+      },
+      "description": "Registry of trained RuBERT toxic span models and their metrics."
+    },
+    "/request_logs/{logId}": {
+      "schema": {
+        "$ref": "#/entities/RequestLog"
+      },
+      "description": "Public inference logs with model predictions and feedback status."
+    },
+    "/labeled_samples/{sampleId}": {
+      "schema": {
+        "$ref": "#/entities/LabeledSample"
+      },
+      "description": "User-confirmed and rejected samples for future model retraining."
+    }
+  }
+}

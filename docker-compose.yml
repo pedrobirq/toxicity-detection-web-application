@@ -1,0 +1,32 @@
+services:
+  model-api:
+    build:
+      context: ./python_inference
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - MODEL_DIR=/app/models/rubert_toxic_detector
+      - MODEL_VERSION=${MODEL_VERSION:-rubert-toxic-detector-v1}
+      - MODEL_API_SECRET=${MODEL_API_SECRET:-}
+      - HF_MODEL_REPO=${HF_MODEL_REPO:-}
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - ./python_inference/models:/app/models:ro
+
+  web-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - model-api
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - APP_URL=${APP_URL:-http://localhost:3000}
+      - MODEL_API_URL=http://model-api:8000
+      - MODEL_API_SECRET=${MODEL_API_SECRET:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}

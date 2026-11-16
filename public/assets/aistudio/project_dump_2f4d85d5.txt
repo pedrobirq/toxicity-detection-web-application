@@ -1,0 +1,2070 @@
+=== PROJECT STRUCTURE ===
+Project_card.md
+README.md
+src/llm_pseudo_labeling.py
+src/model_training/inference.py
+src/model_training/train.py
+test.py
+
+============================================================
+FILE: Project_card.md
+============================================================
+# Карточка проекта
+## Проект
+**Название:** Детекция токсичных языковых паттернов
+**Трек:** Б — сущности
+**Репозиторий:** https://github.com/pedrobirq/toxicity-detection
+
+## Команда
+
+| Участник | Роль | Контакт |
+|---|---|---|
+| Владимир |  | @pedrobirq |
+| Алия |  | @twenty_years_to_go |
+| Полина |  | @ppolique |
+
+## Задача
+
+**Вход**: текст в виде комментария из соцсети
+**Выход**: разметка входного текста на предмет наличия токсичных языковых паттернов
+
+**Кому и зачем это нужно:** модераторам, админам публичных сообществ
+
+## Проверка выбора темы
+
+**Готовая модель, на которой проверяли:**  
+**Объём проверки:** 20 примеров  
+**Результат готовой модели:**  
+**Почему этого недостаточно:**  
+катастрофа
+> Если готовая модель справляется хорошо, задачу нужно сузить: более специальная
+> предметная область, более тонкое различение категорий, менее типичный материал.
+Модель не обучена на нужных данных
+
+## Данные
+
+**Материал:** Russian Paradetox dataset
+**Источник:** https://huggingface.co/datasets/s-nlp/ru_paradetox
+**Откуда берётся разметка:** краудфандинговая разметка на платформе Toloka.ai
+**Предполагаемый объём:** 12.22 тысячи семплов
+**Что есть на руках прямо сейчас:** полный датасет
+
+## Метрика
+
+**Основная:**  
+**Обоснование:**  
+**Целевое значение:**  
+**Пороговое значение неработоспособности:**  
+
+> Называется до получения первых результатов.
+
+## Минимальная версия
+
+> Что будет работать при любом развитии событий.
+
+## Правило четырёх «да»
+
+- [X] Задача выражается как «текст на входе → структура на выходе»
+- [X] Данные можно получить на этой неделе
+- [ ] Есть минимальная версия
+- [ ] Готовые модели справляются недостаточно хорошо
+
+============================================================
+FILE: README.md
+============================================================
+# toxicity-detection
+
+## Quick start
+
+```
+conda create -n toxicity-detection-model-training python=3.11 -y
+conda activate toxicity-detection-model-training
+python -m pip install -r dependencies\toxicity_detection_model_training.txt
+```
+
+**При запуске на CPU:**
+```
+python -m pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+```
+
+**При запуске на GPU:**
+```
+python -m pip install torch --index-url https://download.pytorch.org/whl/cu132
+```
+
+### Model inference
+
+**Запуск на встроенном наборе примеров:**
+```
+python .\src\model_training\inference.py
+```
+
+**Анализ текста из консоли:**
+```
+python .\src\model_training\inference.py --text "Ну и бред ты несешь, клоун" --show_confidence
+```
+
+**Интерактивный режим:**
+```
+python .\src\model_training\inference.py --interactive --show_confidence
+```
+
+
+## Pipeline explanation
+
+### Data
+
+#### Dataset
+
+В проекте используется датасет [RuParaDetox](https://huggingface.co/datasets/s-nlp/ru_paradetox) — русскоязычный параллельный корпус, предназначенный для детоксикации текстов. Он содержит пары токсичных комментариев и их нейтрализованных аналогов, в которых сохраняется исходный смысл сообщения при снижении уровня токсичности.
+
+Датасет содержит два основных поля:
+
+- `ru_toxic_comment` — исходный токсичный комментарий.
+- `ru_neutral_comment` — нейтрализованная версия исходного комментария.
+
+
+#### Toxicity taxonomy
+
+Для выявления и классификации токсичных языковых паттернов была разработана собственная таксономия, включающая шесть категорий:
+
+| Категория            | Описание                                                                                                                                                             |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `profanity`          | Ненормативная лексика, бранные слова и ругательства общего характера, не направленные непосредственно против конкретного человека.                                   |
+| `insult`             | Прямые оскорбления личности, направленные на унижение её характера, внешности, интеллекта или других качеств.                                                        |
+| `derogation_mockery` | Уничижительные ярлыки, саркастические выражения, намеренное искажение слов и насмешки.                                                                               |
+| `threat_violence`    | Угрозы физической расправой, причинением вреда или пожелания смерти.                                                                                                 |
+| `harassment_doxxing` | Призывы к травле, деанонимизации или раскрытию персональной информации.                                                                                              |
+| `hate_speech`        | Язык вражды и дискриминационные высказывания, направленные против отдельных лиц или групп по признаку расы, национальности, гендера и другим признакам идентичности. |
+
+Основная задача разметки заключается в выявлении конкретных фрагментов токсичного текста (*toxic spans*), а не в присвоении единой метки токсичности всему комментарию. Каждый найденный фрагмент относится к одной из шести категорий.
+
+#### Pseudo-labeling
+
+Поскольку исходный датасет содержит токсичные комментарии и их нейтрализованные аналоги, но не включает разметку токсичных фрагментов на уровне отдельных слов и выражений, для автоматического создания таких аннотаций был реализован пайплайн на основе большой языковой модели (LLM).
+
+Для разметки используется локально запущенная модель **Qwen2.5 14B Instruct**. 
+
+Процесс псевдоразметки включает следующие этапы:
+
+1. **Загрузка датасета** 
+2. **Формирование промпта** 
+3. **Инференс языковой модели** 
+4. **Валидация и выравнивание разметки**
+5. **Сохранение результатов** 
+
+Пайплайн также сохраняет информацию о прогрессе разметки, что позволяет пропускать уже обработанные примеры при повторном запуске скрипта.
+
+В результате формируется аннотированный датасет, который используется в качестве основы для последующей подготовки данных и обучения модели обнаружения токсичности.
+
+#### Postprocessing
+
+В получившейся разметки датасета распределение токсичных языковых паттернов выглядит следующим образом:
+
+- profanity: 8220
+- derogation_mockery: 381
+- insult: 5803
+- threat_violence: 215
+- hate_speech: 164
+- harassment_doxxing: 9
+
+В связи с недостаточным числом выявленных паттернов "harassment doxxing" решено исключить этот паттерн из датасета, посредством удаления объектов, где этот паттерн был выявлен. 
+
+Помимо этого в получившейся разметке наблюдаются случаи, когда у одного и того же текста выявлялись различные токсичные языковые паттерны. Само наличие нескольких одинаковых текстов в тренировочной выборке, а так же различные значения таргетов для этих объектов нежелательно при обучении модели. В качестве решения этой проблемы использовался подход объединения разных результатов разметки для одного текста в один объект. 
+
+**Итоговое число уникальных текстов:** 6939
+
+**Соотношение train/val:** 0.85/0.15
+**Train:** 5898 | *Val:* 1041 
+
+
+
+============================================================
+FILE: src/llm_pseudo_labeling.py
+============================================================
+"""Pseudo-label Russian toxic spans in s-nlp/ru_paradetox.
+
+Default backend: local Ollama.
+Optional backend: OpenRouter.
+Output: JSONL, one annotated sample per line.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import random
+import re
+from pathlib import Path
+from typing import Any
+
+import httpx
+from datasets import load_dataset
+from openai import (
+    APIConnectionError,
+    APIError,
+    APITimeoutError,
+    AsyncOpenAI,
+    InternalServerError,
+    RateLimitError,
+)
+from pydantic import BaseModel, Field, ValidationError
+from tqdm import tqdm
+
+
+# ============================================================
+# 1. Настройки
+# ============================================================
+
+BACKEND = os.getenv("ANNOTATION_BACKEND", "ollama").strip().lower()
+
+DATASET_NAME = os.getenv("DATASET_NAME", "s-nlp/ru_paradetox")
+DATASET_SPLIT = os.getenv("DATASET_SPLIT", "train")
+
+OUTPUT_PATH = Path(
+    os.getenv(
+        "OUTPUT_PATH",
+        "ru_paradetox_toxic_spans.jsonl",
+    )
+)
+
+DEFAULT_BATCH_SIZE = "1" if BACKEND == "ollama" else "10"
+BATCH_SIZE = 5
+
+DEFAULT_RETRIES = "2" if BACKEND == "ollama" else "5"
+MAX_RETRIES = max(
+    1,
+    int(os.getenv("MAX_RETRIES", DEFAULT_RETRIES)),
+)
+
+OLLAMA_NUM_CTX = max(
+    2048,
+    int(os.getenv("OLLAMA_NUM_CTX", "4096")),
+)
+
+CATEGORIES = {
+    "profanity",
+    "insult",
+    "derogation_mockery",
+    "threat_violence",
+    "harassment_doxxing",
+    "hate_speech",
+}
+
+
+# ============================================================
+# 2. Схемы данных
+# ============================================================
+
+class LLMSpan(BaseModel):
+    span: str = Field(
+        description="Точная подстрока из токсичного комментария"
+    )
+    category: str
+
+
+class LLMItem(BaseModel):
+    id: int
+    spans: list[LLMSpan] = Field(default_factory=list)
+
+
+class LLMResponse(BaseModel):
+    items: list[LLMItem] = Field(default_factory=list)
+
+
+class Entity(BaseModel):
+    span: str
+    start: int
+    end: int
+    category: str
+
+
+class AnnotatedSample(BaseModel):
+    id: int
+    text: str
+    neutral_reference: str
+    entities: list[Entity]
+
+
+# ============================================================
+# 3. Системный промпт
+# ============================================================
+
+SYSTEM_PROMPT = """Ты — эксперт по лингвистической разметке
+токсичных текстов на русском языке.
+
+Для каждого комментария найди все фрагменты (спаны),
+содержащие токсичные языковые паттерны, и отнеси каждый
+спан ровно к одной категории.
+
+Нейтральный аналог используй только как дополнительный
+контекст. Размечай именно токсичный комментарий.
+
+Категории:
+
+1. profanity — обсценная лексика, мат, междометия и
+ругательства общего плана без прямой адресации личности.
+
+2. insult — прямые оскорбления личности, внешности или ума.
+
+3. derogation_mockery — язвительное коверкание слов,
+уничижительные ярлыки и насмешки.
+
+4. threat_violence — угрозы расправой или вредом,
+пожелания смерти.
+
+5. harassment_doxxing — призывы к деанонимизации, травле
+или публикации личных данных.
+
+6. hate_speech — язык вражды, ксенофобия или шовинизм
+по расовым, национальным, гендерным и сходным признакам.
+
+Правила:
+
+- Выделяй точную подстроку из токсичного комментария.
+- Сохраняй оригинальное написание и регистр.
+- Не включай внешнюю пунктуацию, если она не является
+  частью самого токсичного выражения.
+- Выделяй минимальный достаточный токсичный фрагмент.
+- Не придумывай спаны, которых нет в исходном тексте.
+- Если токсичных фрагментов нет, верни spans: [].
+- Каждый id из входного списка должен появиться в ответе
+  ровно один раз.
+- Верни только валидный JSON без Markdown и пояснений.
+
+Формат ответа:
+
+{
+  "items": [
+    {
+      "id": 0,
+      "spans": [
+        {
+          "span": "точный фрагмент",
+          "category": "profanity"
+        }
+      ]
+    }
+  ]
+}
+
+Допустимые категории:
+profanity, insult, derogation_mockery, threat_violence,
+harassment_doxxing, hate_speech.
+"""
+
+
+# ============================================================
+# 4. Разбор JSON
+# ============================================================
+
+def parse_json_content(raw_content: str) -> dict[str, Any]:
+    """Разбирает JSON, даже если модель добавила Markdown."""
+
+    raw_content = (raw_content or "").strip()
+
+    if not raw_content:
+        raise ValueError("Модель вернула пустой ответ.")
+
+    try:
+        parsed = json.loads(raw_content)
+    except json.JSONDecodeError:
+        unfenced = re.sub(
+            r"^```(?:json)?\s*|\s*```$",
+            "",
+            raw_content,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        try:
+            parsed = json.loads(unfenced)
+        except json.JSONDecodeError:
+            start = unfenced.find("{")
+            end = unfenced.rfind("}")
+
+            if start < 0 or end <= start:
+                raise ValueError(
+                    f"В ответе не найден JSON-объект: "
+                    f"{raw_content[:300]!r}"
+                )
+
+            parsed = json.loads(unfenced[start:end + 1])
+
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            "Корень JSON-ответа должен быть объектом."
+        )
+
+    return parsed
+
+
+def parse_llm_response(raw_content: str) -> LLMResponse:
+    data = parse_json_content(raw_content)
+    return LLMResponse.model_validate(data)
+
+
+# ============================================================
+# 5. Определение смещений span
+# ============================================================
+
+def align_spans(
+    text: str,
+    llm_spans: list[LLMSpan],
+) -> list[Entity]:
+    """Находит точные позиции спанов в исходном тексте."""
+
+    entities: list[Entity] = []
+    used_positions: set[tuple[int, int, str]] = set()
+    cursor = 0
+
+    for item in llm_spans:
+        span = item.span.strip()
+        category = item.category.strip()
+
+        if not span or category not in CATEGORIES:
+            continue
+
+        chosen = None
+
+        # Сначала ищем с учётом регистра.
+        # Если совпадения нет — без учёта регистра.
+        for flags in (0, re.IGNORECASE):
+            matches = list(
+                re.finditer(re.escape(span), text, flags=flags)
+            )
+
+            candidates = [
+                match
+                for match in matches
+                if (
+                    match.start(),
+                    match.end(),
+                    category,
+                ) not in used_positions
+            ]
+
+            if not candidates:
+                continue
+
+            after_cursor = [
+                match
+                for match in candidates
+                if match.start() >= cursor
+            ]
+
+            chosen = min(
+                after_cursor or candidates,
+                key=lambda match: match.start(),
+            )
+            break
+
+        if chosen is None:
+            print(
+                f"\n[Предупреждение] Спан не найден: {span!r}"
+            )
+            continue
+
+        start, end = chosen.span()
+
+        used_positions.add((start, end, category))
+
+        entities.append(
+            Entity(
+                span=text[start:end],
+                start=start,
+                end=end,
+                category=category,
+            )
+        )
+
+        cursor = max(cursor, end)
+
+    entities.sort(
+        key=lambda entity: (
+            entity.start,
+            entity.end,
+            entity.category,
+        )
+    )
+
+    return entities
+
+
+# ============================================================
+# 6. Настройка подключения к модели
+# ============================================================
+
+def create_client() -> tuple[AsyncOpenAI, str]:
+    """Создаёт API-клиент для Ollama или OpenRouter."""
+
+    if BACKEND == "ollama":
+        base_url = os.getenv(
+            "OLLAMA_BASE_URL",
+            "http://127.0.0.1:11434/v1",
+        )
+
+        model = os.getenv(
+            "OLLAMA_MODEL",
+            "qwen2.5:14b-instruct",
+        )
+
+        # trust_env=False запрещает httpx использовать
+        # системные HTTP_PROXY / HTTPS_PROXY.
+        #
+        # Для localhost это помогает избежать отправки
+        # локальных запросов через внешний прокси.
+        local_http_client = httpx.AsyncClient(
+            trust_env=False,
+            timeout=httpx.Timeout(
+                180.0,
+                connect=10.0,
+            ),
+        )
+
+        client = AsyncOpenAI(
+            base_url=base_url,
+            api_key="ollama",
+            http_client=local_http_client,
+            max_retries=0,
+        )
+
+        print(f"Ollama API: {base_url}")
+        print("HTTP-прокси: системные настройки игнорируются")
+        print(f"Модель: {model}")
+        print(f"Размер контекста: {OLLAMA_NUM_CTX}")
+        print(f"Размер пачки: {BATCH_SIZE}")
+
+        return client, model
+
+    if BACKEND == "openrouter":
+        api_key = os.getenv("OPENROUTER_API_KEY")
+
+        if not api_key:
+            raise ValueError(
+                "Задайте переменную OPENROUTER_API_KEY."
+            )
+
+        model = os.getenv(
+            "OPENROUTER_MODEL",
+            "qwen/qwen-2.5-72b-instruct:free",
+        )
+
+        client = AsyncOpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+            default_headers={
+                "HTTP-Referer": "http://localhost",
+                "X-Title": "Russian Toxic Span Pseudo-labeling",
+            },
+            timeout=180.0,
+            max_retries=0,
+        )
+
+        print("Backend: OpenRouter")
+        print(f"Модель: {model}")
+
+        return client, model
+
+    raise ValueError(
+        f"Неизвестный backend: {BACKEND!r}. "
+        "Допустимы ollama и openrouter."
+    )
+
+
+# ============================================================
+# 7. Запросы и повторные попытки
+# ============================================================
+
+
+async def completion_with_backoff(
+    client: AsyncOpenAI,
+    model: str,
+    messages: list[dict[str, str]],
+) -> Any:
+    for attempt in range(MAX_RETRIES):
+        try:
+            if BACKEND == "openrouter":
+                await asyncio.sleep(3.2)
+
+            request_options = {}
+
+            if BACKEND == "ollama":
+                request_options["extra_body"] = {
+                    "options": {
+                        "num_ctx": OLLAMA_NUM_CTX,
+                        "repeat_penalty": 1.1,
+                        "repeat_last_n": 128,
+                        "top_k": 40,
+                    }
+                }
+
+            return await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.2,
+                top_p=0.9,
+                response_format={"type": "json_object"},
+                max_tokens=512,
+                **request_options,
+            )
+
+        except RateLimitError:
+            if attempt == MAX_RETRIES - 1:
+                raise
+
+            delay = min(
+                60.0,
+                5.0 * (2 ** attempt),
+            ) + random.uniform(0.2, 1.5)
+
+            print(
+                f"\n[Ограничение запросов] "
+                f"Попытка {attempt + 1}/{MAX_RETRIES}. "
+                f"Пауза {delay:.1f} сек."
+            )
+
+            await asyncio.sleep(delay)
+
+        except (
+            APIConnectionError,
+            APITimeoutError,
+            InternalServerError,
+        ) as exc:
+
+            status_code = getattr(exc, "status_code", None)
+
+            print(
+                f"\n[Сетевая/API-ошибка] "
+                f"Тип: {type(exc).__name__}; "
+                f"HTTP: {status_code}; "
+                f"детали: {exc}"
+            )
+
+            if attempt == MAX_RETRIES - 1:
+                raise
+
+            delay = min(
+                30.0,
+                2.0 * (2 ** attempt),
+            ) + random.uniform(0.2, 1.0)
+
+            print(
+                f"[Повтор] Пауза {delay:.1f} сек."
+            )
+
+            await asyncio.sleep(delay)
+
+        except APIError:
+            raise
+
+    raise RuntimeError(
+        "Не удалось получить ответ после повторных попыток."
+    )
+
+
+
+# ============================================================
+# 8. Сохранение и возобновление
+# ============================================================
+
+def load_processed_ids(file_path: Path) -> set[int]:
+    """Загружает ID записей, успешно сохранённых ранее."""
+
+    if not file_path.exists():
+        return set()
+
+    processed: set[int] = set()
+
+    with file_path.open("r", encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+
+            if not line:
+                continue
+
+            try:
+                record = json.loads(line)
+                record_id = record.get("id")
+
+                if isinstance(record_id, int):
+                    processed.add(record_id)
+
+            except (json.JSONDecodeError, AttributeError):
+                continue
+
+    return processed
+
+
+def append_jsonl(
+    file_path: Path,
+    record: dict[str, Any],
+) -> None:
+    file_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with file_path.open("a", encoding="utf-8") as file:
+        file.write(
+            json.dumps(
+                record,
+                ensure_ascii=False,
+            ) + "\n"
+        )
+        file.flush()
+
+
+def save_error(
+    sample_id: int,
+    error: str,
+) -> None:
+    error_path = OUTPUT_PATH.with_name(
+        f"{OUTPUT_PATH.stem}.errors.jsonl"
+    )
+
+    append_jsonl(
+        error_path,
+        {
+            "id": sample_id,
+            "error": error,
+        },
+    )
+
+
+# ============================================================
+# 9. Разметка одной пачки
+# ============================================================
+
+async def request_batch(
+    client: AsyncOpenAI,
+    model_name: str,
+    batch: list[dict[str, Any]],
+) -> dict[int, list[LLMSpan]]:
+    payload = [
+        {
+            "id": row["id"],
+            "toxic_comment": row["text"],
+            "neutral_reference": row["neutral_reference"],
+        }
+        for row in batch
+    ]
+
+    user_prompt = (
+        "Разметь каждый объект из списка. "
+        "Поле toxic_comment — единственный текст, "
+        "в котором нужно искать токсичные спаны. "
+        "neutral_reference дан только для контекста.\n"
+        "Верни JSON с массивом items. Для каждого входного "
+        "id верни id и spans.\n\n"
+        + json.dumps(payload, ensure_ascii=False)
+    )
+
+    response = await completion_with_backoff(
+        client=client,
+        model=model_name,
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": user_prompt,
+            },
+        ],
+    )
+
+    raw_content = response.choices[0].message.content
+    parsed = parse_llm_response(raw_content or "")
+
+    expected_ids = {
+        row["id"]
+        for row in batch
+    }
+
+    by_id: dict[int, list[LLMSpan]] = {}
+
+    for item in parsed.items:
+        if item.id in expected_ids:
+            by_id[item.id] = item.spans
+
+    return by_id
+
+
+async def annotate_batch_and_save(
+    client: AsyncOpenAI,
+    model_name: str,
+    batch: list[dict[str, Any]],
+) -> int:
+    try:
+        annotations = await request_batch(
+            client,
+            model_name,
+            batch,
+        )
+
+    except InternalServerError as exc:
+        status_code = getattr(exc, "status_code", None)
+
+        # Если позже размер пачки будет увеличен, при 503
+        # автоматически попробуем разделить пачку на части.
+        if (
+            BACKEND == "ollama"
+            and status_code == 503
+            and len(batch) > 1
+        ):
+            midpoint = len(batch) // 2
+
+            print(
+                f"\n[Ollama 503] Разбиваю пачку "
+                f"из {len(batch)} записей."
+            )
+
+            first = await annotate_batch_and_save(
+                client,
+                model_name,
+                batch[:midpoint],
+            )
+
+            second = await annotate_batch_and_save(
+                client,
+                model_name,
+                batch[midpoint:],
+            )
+
+            return first + second
+
+        raise
+
+    except (
+        ValueError,
+        ValidationError,
+        json.JSONDecodeError,
+    ) as exc:
+        if len(batch) > 1:
+            print(
+                f"\n[Предупреждение] Невалидный ответ: {exc}. "
+                "Повторяю по одному комментарию."
+            )
+
+            successes = 0
+
+            for row in batch:
+                successes += await annotate_batch_and_save(
+                    client,
+                    model_name,
+                    [row],
+                )
+
+            return successes
+
+        row = batch[0]
+
+        save_error(
+            row["id"],
+            f"Некорректный JSON/схема ответа: {exc}",
+        )
+
+        print(
+            f"\n[Ошибка записи #{row['id']}] {exc}"
+        )
+
+        return 0
+
+    successes = 0
+
+    for row in batch:
+        sample_id = row["id"]
+
+        if sample_id not in annotations:
+            if len(batch) > 1:
+                successes += await annotate_batch_and_save(
+                    client,
+                    model_name,
+                    [row],
+                )
+            else:
+                save_error(
+                    sample_id,
+                    "Модель не вернула объект для этого id.",
+                )
+
+                print(
+                    f"\n[Ошибка записи #{sample_id}] "
+                    "Модель пропустила запись."
+                )
+
+            continue
+
+        entities = align_spans(
+            row["text"],
+            annotations[sample_id],
+        )
+
+        record = AnnotatedSample(
+            id=sample_id,
+            text=row["text"],
+            neutral_reference=row["neutral_reference"],
+            entities=entities,
+        )
+
+        append_jsonl(
+            OUTPUT_PATH,
+            record.model_dump(),
+        )
+
+        successes += 1
+
+    return successes
+
+
+# ============================================================
+# 10. Главная функция
+# ============================================================
+
+async def main() -> None:
+    client, model_name = create_client()
+
+    print(f"Backend: {BACKEND}; model: {model_name}")
+    print(f"Dataset: {DATASET_NAME}, split={DATASET_SPLIT}")
+    print(f"Output: {OUTPUT_PATH.resolve()}")
+
+    processed_ids = load_processed_ids(OUTPUT_PATH)
+
+    print(
+        f"Ранее успешно размечено: "
+        f"{len(processed_ids)} записей"
+    )
+
+    print("Загрузка датасета из Hugging Face...")
+
+    dataset = load_dataset(
+        DATASET_NAME,
+        split=DATASET_SPLIT,
+    )
+
+    rows: list[dict[str, Any]] = []
+
+    for idx, row in enumerate(dataset):
+        if idx in processed_ids:
+            continue
+
+        toxic = row.get("ru_toxic_comment")
+        neutral = row.get("ru_neutral_comment")
+
+        toxic_text = (
+            toxic if isinstance(toxic, str) else ""
+        )
+
+        neutral_text = (
+            neutral if isinstance(neutral, str) else ""
+        )
+
+        if not toxic_text.strip():
+            record = AnnotatedSample(
+                id=idx,
+                text=toxic_text,
+                neutral_reference=neutral_text,
+                entities=[],
+            )
+
+            append_jsonl(
+                OUTPUT_PATH,
+                record.model_dump(),
+            )
+
+            continue
+
+        rows.append(
+            {
+                "id": idx,
+                "text": toxic_text,
+                "neutral_reference": neutral_text,
+            }
+        )
+
+    # for debugging
+    # rows = rows[:1]
+
+    total_pending = len(rows)
+
+    print(
+        f"Осталось разметить: {total_pending} "
+        f"из {len(dataset)}"
+    )
+
+    if total_pending == 0:
+        print("Датасет уже полностью размечен.")
+        await client.close()
+        return
+
+    successful = 0
+
+    try:
+        for start in tqdm(
+            range(0, len(rows), BATCH_SIZE),
+            desc="Разметка",
+            unit="batch",
+        ):
+            batch = rows[start:start + BATCH_SIZE]
+
+            successful += await annotate_batch_and_save(
+                client,
+                model_name,
+                batch,
+            )
+
+    except RateLimitError as exc:
+        print(
+            "\nДостигнут лимит запросов API. "
+            "Успешно размеченные записи сохранены."
+        )
+        print(f"Подробности: {exc}")
+
+    except (
+        APIConnectionError,
+        APITimeoutError,
+    ) as exc:
+        print(
+            "\nНе удалось подключиться к модели. "
+            "Проверьте, что Ollama запущена и доступна."
+        )
+        print(f"Подробности: {exc}")
+
+    except APIError as exc:
+        print(
+            "\nAPI вернул ошибку. "
+            "Прогресс успешно размеченных записей сохранён."
+        )
+
+        print(
+            f"HTTP-код: "
+            f"{getattr(exc, 'status_code', 'неизвестен')}"
+        )
+
+        print(f"Подробности: {exc}")
+
+        body = getattr(exc, "body", None)
+
+        if body:
+            print(f"Ответ сервера: {body}")
+
+        response = getattr(exc, "response", None)
+
+        if response is not None:
+            try:
+                print(
+                    f"URL запроса: "
+                    f"{response.request.url}"
+                )
+
+                response_text = response.text
+
+                if response_text:
+                    print(
+                        "Тело HTTP-ответа: "
+                        f"{response_text[:2000]}"
+                    )
+
+            except Exception as diagnostic_exc:
+                print(
+                    "Не удалось прочитать детали HTTP-ответа: "
+                    f"{diagnostic_exc}"
+                )
+
+    finally:
+        await client.close()
+
+    error_path = OUTPUT_PATH.with_name(
+        f"{OUTPUT_PATH.stem}.errors.jsonl"
+    )
+
+    print(
+        f"\nУспешно записано за этот запуск: {successful}"
+    )
+    print(f"Результаты: {OUTPUT_PATH.resolve()}")
+    print(f"Файл ошибок: {error_path.resolve()}")
+    print(
+        "Для продолжения запустите скрипт снова. "
+        "Уже сохранённые ID будут пропущены."
+    )
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+
+    except KeyboardInterrupt:
+        print(
+            "\nОстановлено пользователем. "
+            "Успешно сохранённые записи останутся в JSONL."
+        )
+
+============================================================
+FILE: src/model_training/inference.py
+============================================================
+import json
+import argparse
+from pathlib import Path
+from typing import List, Dict, Any
+
+import torch
+import torch.nn as nn
+from transformers import AutoTokenizer, AutoConfig, AutoModel
+
+
+# =====================================================================
+# 1. АРХИТЕКТУРА МОДЕЛИ (идентична train.py для загрузки весов)
+# =====================================================================
+
+class RuBertToxicDetector(nn.Module):
+    def __init__(
+        self,
+        model_name: str = "DeepPavlov/rubert-base-cased",
+        num_labels: int = 11,
+        num_layers_pool: int = 4,
+    ):
+        super().__init__()
+        self.config = AutoConfig.from_pretrained(model_name, output_hidden_states=True)
+        self.rubert = AutoModel.from_pretrained(model_name, config=self.config, attn_implementation="eager")
+
+        self.num_layers_pool = num_layers_pool
+        self.layer_weights = nn.Parameter(torch.ones(num_layers_pool))
+
+        self.dropouts = nn.ModuleList([nn.Dropout(0.2) for _ in range(5)])
+        self.classifier = nn.Linear(self.config.hidden_size, num_labels)
+
+    def forward(self, input_ids, attention_mask):
+        outputs = self.rubert(input_ids=input_ids, attention_mask=attention_mask)
+        top_hidden_states = outputs.hidden_states[-self.num_layers_pool:]
+
+        weights = torch.softmax(self.layer_weights, dim=0).view(-1, 1, 1, 1)
+        stacked = torch.stack(top_hidden_states, dim=0)
+        pooled_output = torch.sum(weights * stacked, dim=0)
+
+        # В режиме model.eval() слои Dropout не изменяют тензор,
+        # но сохраняем структуру графа для точного совпадения весов
+        logits = torch.mean(
+            torch.stack([self.classifier(drop(pooled_output)) for drop in self.dropouts], dim=0),
+            dim=0,
+        )
+        return logits
+
+
+# =====================================================================
+# 2. КЛАСС ПРЕДИКТОРА И ДЕКОДИРОВАНИЕ BIO -> (start, end, category)
+# =====================================================================
+
+class ToxicSpanPredictor:
+    def __init__(self, model_dir: str = "models/rubert_toxic_detector", device: str = None):
+        self.model_dir = Path(model_dir)
+        self.ckpt_path = self.model_dir / "best_model.pt"
+        self.tokenizer_dir = self.model_dir / "tokenizer"
+
+        if not self.ckpt_path.exists():
+            raise FileNotFoundError(f"Чекпоинт не найден: {self.ckpt_path.resolve()}")
+
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+
+        # Загружаем чекпоинт и метаданные
+        checkpoint = torch.load(self.ckpt_path, map_location=self.device, weights_only=False)
+        self.model_name = checkpoint.get("model_name", "DeepPavlov/rubert-base-cased")
+        self.max_len = checkpoint.get("max_len", 256)
+        self.id2label = {int(k): v for k, v in checkpoint["id2label"].items()}
+        self.label2id = checkpoint["label2id"]
+
+        # Загружаем локальный токенизатор (или из HuggingFace Hub, если папка отсутствует)
+        tokenizer_source = str(self.tokenizer_dir) if self.tokenizer_dir.exists() else self.model_name
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, use_fast=True)
+
+        # Инициализируем модель и загружаем веса
+        self.model = RuBertToxicDetector(
+            model_name=self.model_name,
+            num_labels=len(self.id2label),
+        )
+        self.model.load_state_dict(checkpoint["model_state_dict"])
+        self.model.to(self.device)
+        self.model.eval()
+
+        val_f1 = checkpoint.get("val_metrics", {}).get("token_macro_f1", None)
+        f1_str = f" | Val Macro F1: {val_f1:.4f}" if val_f1 is not None else ""
+        print(f"[Predictor] Модель загружена с {self.device} (Эпоха: {checkpoint.get('epoch')}{f1_str})")
+
+    @staticmethod
+    def _decode_tokens_to_spans(
+        text: str,
+        offsets: List[List[int]],
+        pred_ids: List[int],
+        probs: List[float],
+        id2label: Dict[int, str],
+        include_confidence: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Переводит последовательность BIO-меток токенов в символьные спаны.
+        Корректно склеивает WordPiece-подтокены одного слова, даже если модель
+        предсказала I-tag с начала слова или два B-tag подряд внутри одного слова.
+        """
+        entities = []
+        current_ent = None
+
+        for (start, end), pred_id, prob in zip(offsets, pred_ids, probs):
+            # Пропускаем спецтокены ([CLS], [SEP], [PAD])
+            if start == 0 and end == 0:
+                continue
+
+            tag = id2label[int(pred_id)]
+
+            if tag == "O":
+                if current_ent is not None:
+                    entities.append( ToxicSpanPredictor._finalize_entity(text, current_ent, include_confidence) )
+                    current_ent = None
+                continue
+
+            prefix, cat = tag.split("-", 1)
+
+            if current_ent is not None:
+                # Проверяем, является ли токен продолжением текущей сущности:
+                # 1) Та же категория и префикс I-
+                # 2) Или токен вплотную примыкает к предыдущему (подтокен того же слова без пробела) с той же категорией
+                is_same_cat = (current_ent["category"] == cat)
+                is_subword_continuation = (start == current_ent["end"])
+
+                if is_same_cat and (prefix == "I" or is_subword_continuation):
+                    current_ent["end"] = end
+                    current_ent["probs"].append(prob)
+                else:
+                    entities.append( ToxicSpanPredictor._finalize_entity(text, current_ent, include_confidence) )
+                    current_ent = {"start": start, "end": end, "category": cat, "probs": [prob]}
+            else:
+                # Открываем новую сущность (даже если модель сразу выдала I-cat без B-cat)
+                current_ent = {"start": start, "end": end, "category": cat, "probs": [prob]}
+
+        if current_ent is not None:
+            entities.append( ToxicSpanPredictor._finalize_entity(text, current_ent, include_confidence) )
+
+        return entities
+
+    @staticmethod
+    def _finalize_entity(text: str, ent_data: Dict[str, Any], include_confidence: bool) -> Dict[str, Any]:
+        start, end = ent_data["start"], ent_data["end"]
+        result = {
+            "span": text[start:end],
+            "start": start,
+            "end": end,
+            "category": ent_data["category"],
+        }
+        if include_confidence:
+            avg_prob = sum(ent_data["probs"]) / len(ent_data["probs"])
+            result["confidence"] = round(float(avg_prob), 4)
+        return result
+
+    @torch.no_grad()
+    def predict_batch(self, texts: List[str], include_confidence: bool = False) -> List[Dict[str, Any]]:
+        
+        print("[DEBUG] predict_batch вызвана", flush=True)
+        
+        """Предсказание для списка текстов."""
+        if not texts:
+            return []
+
+        encoding = self.tokenizer(
+            texts,
+            truncation=True,
+            max_length=self.max_len,
+            padding=True,
+            return_offsets_mapping=True,
+            return_tensors="pt",
+        )
+
+        input_ids = encoding["input_ids"].to(self.device)
+        attention_mask = encoding["attention_mask"].to(self.device)
+        offsets_batch = encoding["offset_mapping"].tolist()
+
+        print(
+            f"[DEBUG] Устройство: {self.device}",
+            flush=True
+        )
+
+        print(
+            f"[DEBUG] Размер входных данных: {input_ids.shape}",
+            flush=True
+        )
+
+        if self.device.type == "cuda":
+            with torch.amp.autocast("cuda"):
+                logits = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask
+                )
+        else:
+            logits = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask
+            )
+
+        probabilities = torch.softmax(logits, dim=-1)
+        max_probs, pred_ids = torch.max(probabilities, dim=-1)
+
+        pred_ids_batch = pred_ids.cpu().tolist()
+        max_probs_batch = max_probs.cpu().tolist()
+
+        results = []
+        for idx, (text, offsets, preds, probs) in enumerate(
+            zip(texts, offsets_batch, pred_ids_batch, max_probs_batch)
+        ):
+            entities = self._decode_tokens_to_spans(
+                text=text,
+                offsets=offsets,
+                pred_ids=preds,
+                probs=probs,
+                id2label=self.id2label,
+                include_confidence=include_confidence,
+            )
+            results.append({
+                "id": idx,
+                "text": text,
+                "entities": entities,
+            })
+            
+        print(
+            f"[DEBUG] Forward завершён. Logits shape: {logits.shape}",
+            flush=True
+        )
+
+        return results
+
+    def predict_text(self, text: str, include_confidence: bool = False) -> Dict[str, Any]:
+        """Предсказание для одной строки."""
+        return self.predict_batch([text], include_confidence=include_confidence)[0]
+
+
+# =====================================================================
+# 3. УТИЛИТА ДЛЯ НАГЛЯДНОГО ВЫВОДА В КОНСОЛЬ
+# =====================================================================
+
+def format_highlighted_text(text: str, entities: List[Dict[str, Any]]) -> str:
+    """Форматирует текст с подсветкой найденных спанов: [спан | категория]."""
+    if not entities:
+        return text
+
+    # Сортируем с конца, чтобы вставка скобок не сбивала символьные индексы
+    highlighted = text
+    for ent in sorted(entities, key=lambda x: x["start"], reverse=True):
+        s, e, cat = ent["start"], ent["end"], ent["category"]
+        conf_str = f" ({ent['confidence']:.2f})" if "confidence" in ent else ""
+        replacement = f"[{highlighted[s:e]} | {cat}{conf_str}]"
+        highlighted = highlighted[:s] + replacement + highlighted[e:]
+    return highlighted
+
+
+# =====================================================================
+# 4. ТОЧКА ВХОДА (ДЕМО, ОДИНОЧНЫЙ ТЕКСТ И ИНТЕРАКТИВНЫЙ РЕЖИМ)
+# =====================================================================
+
+def main():
+    parser = argparse.ArgumentParser(description="Инференс модели детекции токсичных паттернов")
+    parser.add_argument(
+        "--model_dir",
+        type=str,
+        default="models/rubert_toxic_detector",
+        help="Путь к директории с best_model.pt и папкой tokenizer/",
+    )
+    parser.add_argument(
+        "--text",
+        type=str,
+        default=None,
+        help="Одиночный текст для проверки через командную строку",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Запустить интерактивный режим ввода текстов в консоли",
+    )
+    parser.add_argument(
+        "--show_confidence",
+        action="store_true",
+        help="Добавлять уверенность модели (confidence) в вывод сущностей",
+    )
+    args = parser.parse_args()
+
+    predictor = ToxicSpanPredictor(model_dir=args.model_dir)
+
+    # Режим 1: Одиночный текст из аргумента --text
+    if args.text:
+        result = predictor.predict_text(args.text, include_confidence=args.show_confidence)
+        print("\nРазмеченный текст:")
+        print(" ", format_highlighted_text(result["text"], result["entities"]))
+        print("\nJSON-ответ:")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+
+    # Режим 2: Интерактивный ввод в терминале
+    if args.interactive:
+        print("\n=== Интерактивный режим (введите 'exit' или 'q' для выхода) ===")
+        while True:
+            try:
+                user_text = input("\nВведите текст: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nВыход.")
+                break
+
+            if not user_text:
+                continue
+            if user_text.lower() in {"exit", "q", "quit", "выход"}:
+                break
+
+            result = predictor.predict_text(user_text, include_confidence=args.show_confidence)
+            print("Разметка :", format_highlighted_text(result["text"], result["entities"]))
+            print("JSON     :", json.dumps(result, ensure_ascii=False))
+        return
+
+    # Режим 3 (по умолчанию): Прогон на встроенных тестовых примерах
+    demo_texts = [
+        "Я убью тебя и всю твою семью",
+        "Все негры должны быть убиты",
+        "Он просто хуесос",
+        "Блять, когда же это закончится"
+    ]
+
+    print("\n=== Демонстрационный прогон на собственных примерах ===")
+    results = predictor.predict_batch(demo_texts, include_confidence=args.show_confidence)
+
+    for res in results:
+        print("-" * 70)
+        print("Исходный текст :", res["text"])
+        print("Визуализация   :", format_highlighted_text(res["text"], res["entities"]))
+        print("JSON-формат    :", json.dumps(res, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
+
+============================================================
+FILE: src/model_training/train.py
+============================================================
+import os
+import json
+import random
+import argparse
+from pathlib import Path
+from collections import defaultdict, Counter
+
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+from transformers import (
+    AutoTokenizer,
+    AutoConfig,
+    AutoModel,
+    get_cosine_schedule_with_warmup,
+)
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import f1_score
+from tqdm import tqdm
+
+
+# =====================================================================
+# 1. КОНСТАНТЫ И СХЕМА КАТЕГОРИЙ
+# =====================================================================
+
+# Список целевых категорий в порядке возрастания редкости (для разрешения конфликтов и стратификации)
+TARGET_CATEGORIES = [
+    "profanity",           # ~8220
+    "insult",              # ~5803
+    "derogation_mockery",  # ~381
+    "threat_violence",     # ~215
+    "hate_speech",         # ~164
+]
+
+EXCLUDED_CATEGORIES = {"harassment_doxxing"}
+
+# Приоритет редкости: чем выше число, тем приоритетнее категория при ничьей разметчиков
+RARITY_PRIORITY = {cat: idx for idx, cat in enumerate(TARGET_CATEGORIES)}
+
+# BIO-схема меток
+LABEL2ID = {"O": 0}
+for cat in TARGET_CATEGORIES:
+    LABEL2ID[f"B-{cat}"] = len(LABEL2ID)
+    LABEL2ID[f"I-{cat}"] = len(LABEL2ID)
+ID2LABEL = {v: k for k, v in LABEL2ID.items()}
+
+
+def seed_everything(seed: int = 42):
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+# =====================================================================
+# 2. ПРЕДОБРАБОТКА, ФИЛЬТРАЦИЯ И СКЛЕЙКА ДУБЛИКАТОВ
+# =====================================================================
+
+def load_and_preprocess_dataset(jsonl_path: Path):
+    """
+    1. Читает JSONL-файл.
+    2. Полностью исключает тексты, в которых хотя бы в одном дубликате есть 'harassment_doxxing'.
+    3. Склеивает сущности для одинаковых 'text', разрешая конфликты категорий и наложения спанов.
+    """
+    if not jsonl_path.exists():
+        raise FileNotFoundError(f"Датасет не найден по пути: {jsonl_path.resolve()}")
+
+    raw_records = []
+    blacklisted_texts = set()
+
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line_num, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            text = record.get("text", "").strip()
+            if not text:
+                continue
+
+            entities = record.get("entities", [])
+            # Проверяем наличие исключаемой категории
+            if any(ent.get("category") in EXCLUDED_CATEGORIES for ent in entities):
+                blacklisted_texts.add(text)
+                continue
+
+            raw_records.append((text, entities))
+
+    # Группируем сущности по уникальному полю "text"
+    # grouped_spans[text][(start, end)] -> Counter(category)
+    grouped_spans = defaultdict(lambda: defaultdict(Counter))
+    all_valid_texts = set()
+
+    dropped_samples_count = 0
+    for text, entities in raw_records:
+        if text in blacklisted_texts:
+            dropped_samples_count += 1
+            continue
+        all_valid_texts.add(text)
+        for ent in entities:
+            cat = ent.get("category")
+            if cat not in RARITY_PRIORITY:
+                continue
+            start, end = int(ent["start"]), int(ent["end"])
+            if 0 <= start < end <= len(text):
+                grouped_spans[text][(start, end)][cat] += 1
+
+    cleaned_samples = []
+    for idx, text in enumerate(sorted(all_valid_texts)):
+        spans_dict = grouped_spans[text]
+        candidate_spans = []
+
+        for (start, end), cat_counter in spans_dict.items():
+            # Выбираем категорию: сначала по числу голосов разметчиков, при равенстве — более редкую
+            best_cat = max(
+                cat_counter.keys(),
+                key=lambda c: (cat_counter[c], RARITY_PRIORITY[c])
+            )
+            total_votes = sum(cat_counter.values())
+            candidate_spans.append({
+                "span": text[start:end],
+                "start": start,
+                "end": end,
+                "category": best_cat,
+                "votes": total_votes,
+            })
+
+        # Разрешаем частичные пересечения спанов (например, [5, 10] и [5, 12]):
+        # Приоритет отдаем спанам с большим числом голосов, большей длиной и более редкой категорией
+        candidate_spans.sort(
+            key=lambda x: (x["votes"], x["end"] - x["start"], RARITY_PRIORITY[x["category"]]),
+            reverse=True,
+        )
+
+        merged_entities = []
+        for cand in candidate_spans:
+            overlaps = any(
+                max(cand["start"], kept["start"]) < min(cand["end"], kept["end"])
+                for kept in merged_entities
+            )
+            if not overlaps:
+                merged_entities.append({
+                    "span": cand["span"],
+                    "start": cand["start"],
+                    "end": cand["end"],
+                    "category": cand["category"],
+                })
+
+        # Сортируем итоговые сущности по порядку появления в тексте
+        merged_entities.sort(key=lambda x: x["start"])
+
+        cleaned_samples.append({
+            "id": idx,
+            "text": text,
+            "entities": merged_entities,
+        })
+
+    print(f"[Data] Всего прочитано записей (без harassment_doxxing): {len(raw_records)}")
+    print(f"[Data] Удалено текстов из-за harassment_doxxing: {len(blacklisted_texts)}")
+    print(f"[Data] Уникальных текстов после склейки дубликатов: {len(cleaned_samples)}")
+
+    return cleaned_samples
+
+
+def stratified_split(samples, val_size: float = 0.15, seed: int = 42):
+    """
+    Стратифицированное разбиение по самой редкой категории в семпле.
+    """
+    strat_labels = []
+    for sample in samples:
+        ents = sample["entities"]
+        if not ents:
+            strat_labels.append("clean")
+        else:
+            # Берем самую редкую категорию в тексте для стратификации
+            rarest_cat = max(
+                (e["category"] for e in ents),
+                key=lambda c: RARITY_PRIORITY[c]
+            )
+            strat_labels.append(rarest_cat)
+
+    # На случай если какой-то стратификационный класс представлен менее чем 2 примерами
+    label_counts = Counter(strat_labels)
+    safe_strat_labels = [
+        lbl if label_counts[lbl] >= 2 else "clean" for lbl in strat_labels
+    ]
+
+    train_samples, val_samples = train_test_split(
+        samples,
+        test_size=val_size,
+        random_state=seed,
+        stratify=safe_strat_labels,
+    )
+    return train_samples, val_samples
+
+
+# =====================================================================
+# 3. TORCH DATASET И ПОДСЧЕТ ВЕСОВ КЛАССОВ
+# =====================================================================
+
+class ToxicSpanDataset(Dataset):
+    def __init__(self, samples, tokenizer, max_len: int = 256):
+        self.samples = samples
+        self.tokenizer = tokenizer
+        self.max_len = max_len
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        item = self.samples[idx]
+        text = item["text"]
+        entities = item.get("entities", [])
+
+        encoding = self.tokenizer(
+            text,
+            truncation=True,
+            max_length=self.max_len,
+            padding="max_length",
+            return_offsets_mapping=True,
+            return_tensors="pt",
+        )
+
+        offsets = encoding["offset_mapping"].squeeze(0).tolist()
+        input_ids = encoding["input_ids"].squeeze(0)
+        attention_mask = encoding["attention_mask"].squeeze(0)
+
+        labels = torch.full((self.max_len,), -100, dtype=torch.long)
+
+        for i, (tok_start, tok_end) in enumerate(offsets):
+            # Пропускаем спецтокены ([CLS], [SEP], [PAD])
+            if tok_start == 0 and tok_end == 0:
+                continue
+
+            labels[i] = LABEL2ID["O"]
+            for ent in entities:
+                e_start, e_end, cat = ent["start"], ent["end"], ent["category"]
+                if max(tok_start, e_start) < min(tok_end, e_end):
+                    prev_tag = ID2LABEL[labels[i - 1].item()] if (i > 0 and labels[i - 1].item() != -100) else "O"
+                    if tok_start <= e_start or prev_tag == "O" or not prev_tag.endswith(cat):
+                        labels[i] = LABEL2ID[f"B-{cat}"]
+                    else:
+                        labels[i] = LABEL2ID[f"I-{cat}"]
+                    break
+
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+        }
+
+
+def compute_damped_class_weights(dataset: ToxicSpanDataset, power: float = 0.35, device: str = "cuda"):
+    """
+    Считает сглаженные веса классов по частоте токенов в тренировочном датасете.
+    Решает проблему дисбаланса (hate_speech vs profanity vs O).
+    """
+    counts = Counter()
+    for i in range(len(dataset)):
+        labels = dataset[i]["labels"].tolist()
+        for lbl in labels:
+            if lbl != -100:
+                counts[lbl] += 1
+
+    num_classes = len(LABEL2ID)
+    total_tokens = sum(counts.values())
+    weights = torch.ones(num_classes, dtype=torch.float32)
+
+    for lbl_id in range(num_classes):
+        c = max(counts.get(lbl_id, 1), 1)
+        weights[lbl_id] = (total_tokens / c) ** power
+
+    # Нормализуем так, чтобы вес 'O' был равен 0.35, а токсичные классы масштабировались пропорционально
+    weights = weights / weights[LABEL2ID["O"]] * 0.35
+    weights = torch.clamp(weights, min=0.25, max=6.0)
+
+    print("\n[Weights] Автоматически рассчитанные веса классов для Loss:")
+    for lbl_id, w in enumerate(weights.tolist()):
+        print(f"  {ID2LABEL[lbl_id]:22s}: weight={w:.3f} (tokens={counts.get(lbl_id, 0)})")
+
+    return weights.to(device)
+
+
+# =====================================================================
+# 4. АРХИТЕКТУРА МОДЕЛИ
+# =====================================================================
+
+class RuBertToxicDetector(nn.Module):
+    def __init__(
+        self,
+        model_name: str = "DeepPavlov/rubert-base-cased",
+        num_labels: int = len(LABEL2ID),
+        num_layers_pool: int = 4,
+    ):
+        super().__init__()
+        self.config = AutoConfig.from_pretrained(model_name, output_hidden_states=True)
+        self.rubert = AutoModel.from_pretrained(model_name, config=self.config)
+
+        self.num_layers_pool = num_layers_pool
+        self.layer_weights = nn.Parameter(torch.ones(num_layers_pool))
+
+        # Multi-Sample Dropout (5 параллельных веток)
+        self.dropouts = nn.ModuleList([nn.Dropout(0.2) for _ in range(5)])
+        self.classifier = nn.Linear(self.config.hidden_size, num_labels)
+
+    def forward(self, input_ids, attention_mask, labels=None, class_weights=None):
+        outputs = self.rubert(input_ids=input_ids, attention_mask=attention_mask)
+        top_hidden_states = outputs.hidden_states[-self.num_layers_pool:]
+
+        # Взвешенная агрегация последних 4 слоев
+        weights = torch.softmax(self.layer_weights, dim=0).view(-1, 1, 1, 1)
+        stacked = torch.stack(top_hidden_states, dim=0)
+        pooled_output = torch.sum(weights * stacked, dim=0)
+
+        # Усреднение логитов после Multi-Sample Dropout
+        logits = torch.mean(
+            torch.stack([self.classifier(drop(pooled_output)) for drop in self.dropouts], dim=0),
+            dim=0,
+        )
+
+        loss = None
+        if labels is not None:
+            loss_fn = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100)
+            loss = loss_fn(logits.view(-1, logits.shape[-1]), labels.view(-1))
+
+        return {"loss": loss, "logits": logits}
+
+
+# =====================================================================
+# 5. МЕТРИКИ (TOKEN-LEVEL F1) И ВАЛИДАЦИЯ
+# =====================================================================
+
+def evaluate_model(model, val_loader, class_weights, device):
+    model.eval()
+    total_loss = 0.0
+    flat_preds = []
+    flat_labels = []
+
+    with torch.no_grad():
+        for batch in val_loader:
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
+
+            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+                outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                    class_weights=class_weights,
+                )
+                loss = outputs["loss"]
+                logits = outputs["logits"]
+
+            total_loss += loss.item()
+            preds = torch.argmax(logits, dim=-1).cpu().numpy()
+            gold = labels.cpu().numpy()
+
+            for p_seq, l_seq in zip(preds, gold):
+                for p_id, l_id in zip(p_seq, l_seq):
+                    if l_id != -100:
+                        # Схлопываем B-cat и I-cat в cat для расчета Token-level F1 по категориям
+                        p_cat = ID2LABEL[int(p_id)].split("-", 1)[-1]
+                        l_cat = ID2LABEL[int(l_id)].split("-", 1)[-1]
+                        flat_preds.append(p_cat)
+                        flat_labels.append(l_cat)
+
+    avg_loss = total_loss / max(len(val_loader), 1)
+
+    macro_f1 = f1_score(
+        flat_labels, flat_preds, labels=TARGET_CATEGORIES, average="macro", zero_division=0
+    )
+    micro_f1 = f1_score(
+        flat_labels, flat_preds, labels=TARGET_CATEGORIES, average="micro", zero_division=0
+    )
+    per_class_f1_arr = f1_score(
+        flat_labels, flat_preds, labels=TARGET_CATEGORIES, average=None, zero_division=0
+    )
+    per_class_f1 = {
+        cat: float(score) for cat, score in zip(TARGET_CATEGORIES, per_class_f1_arr)
+    }
+
+    return {
+        "val_loss": avg_loss,
+        "token_macro_f1": float(macro_f1),
+        "token_micro_f1": float(micro_f1),
+        "per_class_f1": per_class_f1,
+    }
+
+
+# =====================================================================
+# 6. ОСНОВНОЙ ЦИКЛ ОБУЧЕНИЯ
+# =====================================================================
+
+def build_optimizer(model, lr_encoder: float = 2.5e-5, lr_head: float = 2e-4, weight_decay: float = 0.01):
+    no_decay = ["bias", "LayerNorm.weight", "LayerNorm.bias"]
+
+    encoder_params_decay = [
+        p for n, p in model.rubert.named_parameters() if not any(nd in n for nd in no_decay)
+    ]
+    encoder_params_no_decay = [
+        p for n, p in model.rubert.named_parameters() if any(nd in n for nd in no_decay)
+    ]
+    head_params = list(model.classifier.parameters()) + [model.layer_weights]
+
+    optimizer_grouped_parameters = [
+        {"params": encoder_params_decay, "lr": lr_encoder, "weight_decay": weight_decay},
+        {"params": encoder_params_no_decay, "lr": lr_encoder, "weight_decay": 0.0},
+        {"params": head_params, "lr": lr_head, "weight_decay": weight_decay},
+    ]
+    return torch.optim.AdamW(optimizer_grouped_parameters)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Обучение RuBERT для детекции токсичных спанов")
+    parser.add_argument(
+        "--data_path",
+        type=str,
+        default="data/ru_paradetox_toxic_spans.jsonl",
+        help="Путь к исходному JSONL датасету",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="models/rubert_toxic_detector",
+        help="Директория для сохранения лучшей модели и токенизатора",
+    )
+    parser.add_argument("--model_name", type=str, default="DeepPavlov/rubert-base-cased")
+    parser.add_argument("--max_len", type=int, default=256)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--lr_encoder", type=float, default=2.5e-5)
+    parser.add_argument("--lr_head", type=float, default=2e-4)
+    parser.add_argument("--val_size", type=float, default=0.15)
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+
+    seed_everything(args.seed)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[Device] Используется устройство: {device}")
+    if device.type == "cuda":
+        print(f"[Device] GPU: {torch.cuda.get_device_name(0)}")
+
+    data_path = Path(args.data_path)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Загрузка, фильтрация harassment_doxxing и склейка дубликатов
+    samples = load_and_preprocess_dataset(data_path)
+
+    # Сохраняем очищенный датасет для прозрачности и воспроизводимости
+    cleaned_data_path = output_dir / "cleaned_deduplicated_dataset.jsonl"
+    with open(cleaned_data_path, "w", encoding="utf-8") as f:
+        for s in samples:
+            f.write(json.dumps(s, ensure_ascii=False) + "\n")
+    print(f"[Data] Очищенный датасет сохранен в: {cleaned_data_path}")
+
+    # 2. Стратифицированное разбиение на train / val
+    train_samples, val_samples = stratified_split(samples, val_size=args.val_size, seed=args.seed)
+    print(f"[Split] Train: {len(train_samples)} семплов | Val: {len(val_samples)} семплов")
+
+    # 3. Токенизатор и датасеты
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=True)
+    train_dataset = ToxicSpanDataset(train_samples, tokenizer, max_len=args.max_len)
+    val_dataset = ToxicSpanDataset(val_samples, tokenizer, max_len=args.max_len)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=(device.type == "cuda"),
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=(device.type == "cuda"),
+    )
+
+    # 4. Расчет весов классов по тренировочным токенам
+    class_weights = compute_damped_class_weights(train_dataset, power=0.35, device=device)
+
+    # 5. Инициализация модели, оптимизатора и расписания LR
+    model = RuBertToxicDetector(model_name=args.model_name, num_labels=len(LABEL2ID)).to(device)
+    optimizer = build_optimizer(model, lr_encoder=args.lr_encoder, lr_head=args.lr_head)
+
+    total_steps = len(train_loader) * args.epochs
+    warmup_steps = int(0.1 * total_steps)
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps
+    )
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
+
+    # 6. Цикл обучения
+    best_macro_f1 = -1.0
+    history = []
+
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        train_loss = 0.0
+
+        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch}/{args.epochs} [Train]", leave=False)
+        for batch in progress_bar:
+            optimizer.zero_grad(set_to_none=True)
+
+            input_ids = batch["input_ids"].to(device, non_blocking=True)
+            attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+            labels = batch["labels"].to(device, non_blocking=True)
+
+            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+                outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                    class_weights=class_weights,
+                )
+                loss = outputs["loss"]
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+            # Фиксируем масштаб до шага
+            scale_before = scaler.get_scale()
+
+            scaler.step(optimizer)
+            scaler.update()
+
+            # Проверяем, состоялся ли реальный шаг оптимизатора
+            # Если масштаб не уменьшился (scale_after >= scale_before), значит инфов не было и шаг выполнен
+            if scaler.get_scale() >= scale_before:
+                scheduler.step()
+
+            train_loss += loss.item()
+            progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
+
+        avg_train_loss = train_loss / max(len(train_loader), 1)
+
+        # Валидация
+        val_metrics = evaluate_model(model, val_loader, class_weights, device)
+
+        epoch_record = {
+            "epoch": epoch,
+            "train_loss": avg_train_loss,
+            **val_metrics,
+        }
+        history.append(epoch_record)
+
+        print(
+            f"\n--- Эпоха {epoch}/{args.epochs} ---\n"
+            f"Train Loss: {avg_train_loss:.4f} | Val Loss: {val_metrics['val_loss']:.4f}\n"
+            f"Token Macro F1: {val_metrics['token_macro_f1']:.4f} | "
+            f"Token Micro F1: {val_metrics['token_micro_f1']:.4f}"
+        )
+        print("Per-class Token F1:")
+        for cat, score in val_metrics["per_class_f1"].items():
+            print(f"  - {cat:20s}: {score:.4f}")
+
+        # Сохраняем лучшую модель по Token Macro F1 (справедливая метрика при редких классах)
+        if val_metrics["token_macro_f1"] > best_macro_f1:
+            best_macro_f1 = val_metrics["token_macro_f1"]
+            best_ckpt_path = output_dir / "best_model.pt"
+
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "model_name": args.model_name,
+                    "max_len": args.max_len,
+                    "label2id": LABEL2ID,
+                    "id2label": ID2LABEL,
+                    "target_categories": TARGET_CATEGORIES,
+                    "val_metrics": val_metrics,
+                },
+                best_ckpt_path,
+            )
+            tokenizer.save_pretrained(output_dir / "tokenizer")
+            print(f"[Checkpoint] Новая лучшая модель сохранена в {best_ckpt_path} (Macro F1: {best_macro_f1:.4f})")
+
+    # Сохраняем историю обучения
+    with open(output_dir / "training_history.json", "w", encoding="utf-8") as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
+    print(f"\nОбучение завершено! Лучший Token-level Macro F1 на валидации: {best_macro_f1:.4f}")
+
+
+if __name__ == "__main__":
+    main()
+
+============================================================
+FILE: test.py
+============================================================
+from pathlib import Path
+
+IGNORE_DIRS = {".venv", "venv", ".git", "__pycache__", "data", "checkpoints", "outputs", ".idea", ".vscode", "dependencies", "models"}
+ALLOWED_EXTS = {".py", ".yaml", ".yml", ".toml", ".json", ".txt", ".md"}
+
+root = Path(".")
+files = sorted(
+    p for p in root.rglob("*")
+    if p.is_file()
+    and p.suffix in ALLOWED_EXTS
+    and not any(part in IGNORE_DIRS for part in p.parts)
+    and p.name != "project_dump.txt"
+)
+
+with open("project_dump.txt", "w", encoding="utf-8") as out:
+    out.write("=== PROJECT STRUCTURE ===\n")
+    for f in files:
+        out.write(f"{f.as_posix()}\n")
+
+    for f in files:
+        out.write(f"\n{'=' * 60}\nFILE: {f.as_posix()}\n{'=' * 60}\n")
+        out.write(f.read_text(encoding="utf-8", errors="replace"))
+        out.write("\n")
+
+print(f"Готово: собрано {len(files)} файлов в project_dump.txt")

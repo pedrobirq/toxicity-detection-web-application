@@ -1,0 +1,159 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny everything unless explicitly allowed below
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -----------------------------------------------------------------
+    // Shared validation primitives
+    // -----------------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidCategory(cat) {
+      return cat in [
+        'profanity',
+        'insult',
+        'derogation_mockery',
+        'threat_violence',
+        'hate_speech'
+      ];
+    }
+
+    function isValidEntityList(entities) {
+      return entities is list
+        && entities.size() <= 64
+        && (
+          entities.size() == 0
+          || (
+            entities[0] is map
+            && entities[0].keys().hasAll(['span', 'start', 'end', 'category'])
+            && entities[0].keys().hasOnly(['span', 'start', 'end', 'category', 'confidence'])
+            && entities[0].span is string
+            && entities[0].span.size() >= 1
+            && entities[0].span.size() <= 500
+            && entities[0].start is int
+            && entities[0].start >= 0
+            && entities[0].end is int
+            && entities[0].end > entities[0].start
+            && entities[0].category is string
+            && isValidCategory(entities[0].category)
+          )
+        );
+    }
+
+    function isValidModelVersion(data) {
+      return data.keys().hasAll([
+          'name', 'version', 'baseModel', 'epoch',
+          'valMacroF1', 'valMicroF1', 'perClassF1',
+          'weightsUri', 'datasetName', 'isActive', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'name', 'version', 'baseModel', 'epoch',
+          'valMacroF1', 'valMicroF1', 'perClassF1',
+          'weightsUri', 'datasetName', 'notes', 'isActive', 'createdAt'
+        ])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.version is string && data.version.size() >= 1 && data.version.size() <= 40
+        && data.baseModel is string && data.baseModel.size() >= 1 && data.baseModel.size() <= 120
+        && data.epoch is int && data.epoch >= 1 && data.epoch <= 1000
+        && data.valMacroF1 is number && data.valMacroF1 >= 0 && data.valMacroF1 <= 1
+        && data.valMicroF1 is number && data.valMicroF1 >= 0 && data.valMicroF1 <= 1
+        && data.perClassF1 is map
+        && data.weightsUri is string && data.weightsUri.size() >= 1 && data.weightsUri.size() <= 500
+        && data.datasetName is string && data.datasetName.size() >= 1 && data.datasetName.size() <= 160
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000))
+        && data.isActive is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidRequestLog(data) {
+      return data.keys().hasAll([
+          'text', 'entities', 'engine', 'modelVersion',
+          'latencyMs', 'feedbackStatus', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'text', 'entities', 'engine', 'modelVersion',
+          'latencyMs', 'feedbackStatus', 'createdAt'
+        ])
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 4000
+        && isValidEntityList(data.entities)
+        && data.engine in ['fastapi', 'gemini-fallback']
+        && data.modelVersion is string && data.modelVersion.size() >= 1 && data.modelVersion.size() <= 80
+        && data.latencyMs is int && data.latencyMs >= 0 && data.latencyMs <= 300000
+        && data.feedbackStatus in ['pending', 'confirmed', 'rejected']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidLabeledSample(data) {
+      return data.keys().hasAll([
+          'text', 'entities', 'verdict', 'sourceLogId', 'modelVersion', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'text', 'entities', 'verdict', 'sourceLogId', 'modelVersion', 'createdAt'
+        ])
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 4000
+        && isValidEntityList(data.entities)
+        && data.verdict in ['confirmed', 'rejected']
+        && isValidId(data.sourceLogId)
+        && data.modelVersion is string && data.modelVersion.size() >= 1 && data.modelVersion.size() <= 80
+        && data.createdAt is timestamp;
+    }
+
+    // -----------------------------------------------------------------
+    // Collections (No-auth MVP with strict schema & state guards)
+    // -----------------------------------------------------------------
+    match /test/{docId} {
+      allow get: if isValidId(docId);
+      allow list, write: if false;
+    }
+
+    match /models/{modelId} {
+      allow get, list: if true;
+      allow create: if isValidId(modelId)
+        && isValidModelVersion(incoming())
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(modelId)
+        && isValidModelVersion(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['isActive']);
+      allow delete: if false;
+    }
+
+    match /request_logs/{logId} {
+      allow get, list: if true;
+      allow create: if isValidId(logId)
+        && isValidRequestLog(incoming())
+        && incoming().feedbackStatus == 'pending'
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(logId)
+        && isValidRequestLog(incoming())
+        && existing().feedbackStatus == 'pending'
+        && incoming().feedbackStatus in ['confirmed', 'rejected']
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['feedbackStatus']);
+      allow delete: if false;
+    }
+
+    match /labeled_samples/{sampleId} {
+      allow get, list: if true;
+      allow create: if isValidId(sampleId)
+        && isValidLabeledSample(incoming())
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/request_logs/$(incoming().sourceLogId));
+      allow update, delete: if false;
+    }
+  }
+}

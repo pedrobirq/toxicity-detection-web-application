@@ -1,0 +1,6 @@
+{
+  "name": "ToxicSpan Lab",
+  "description": "Веб-сервис для демонстрации модели детекции и классификации токсичных языковых паттернов (RuBERT NER) с визуализацией спанов, логированием запросов и сбором разметки для дообучения.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
