@@ -267,6 +267,17 @@ class PredictRequest(BaseModel):
     include_confidence: bool = True
 
 
+@app.get("/")
+def root() -> Dict[str, Any]:
+    return {
+        "service": "RuBERT Toxic Span Inference API",
+        "status": "ok" if predictor is not None else "loading",
+        "model_version": MODEL_VERSION,
+        "health": "/health",
+        "docs": "/docs",
+    }
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {
